@@ -7,15 +7,18 @@ import org.bukkit.FluidCollisionMode
 import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.block.data.Levelled
-import org.bukkit.entity.Boat
+import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
+//import org.bukkit.entity.Boat
 //import org.bukkit.entity.Display
 //import org.bukkit.entity.TextDisplay
 //import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
+import org.bukkit.event.vehicle.VehicleMoveEvent
 //import org.bukkit.event.vehicle.VehicleDestroyEvent
 import org.bukkit.plugin.java.JavaPlugin
-import org.bukkit.scheduler.BukkitRunnable
-import org.bukkit.scheduler.BukkitTask
+//import org.bukkit.scheduler.BukkitRunnable
+//import org.bukkit.scheduler.BukkitTask
 import org.bukkit.util.RayTraceResult
 import org.bukkit.util.Vector
 import kotlin.math.cos
@@ -24,13 +27,13 @@ import kotlin.math.sin
 class SmoothBoat : JavaPlugin(), Listener {
 
 //    private val boatDisplays = mutableMapOf<Boat, BoatDisplays>()
-    private val updateInterval = 1L // Update every tick
+//    private val updateInterval = 5L // Update every tick
 //    private val movementThreshold = 0.01 // Minimum movement to trigger an update
-    private var updateTask: BukkitTask? = null
+//    private var updateTask: BukkitTask? = null
 
     override fun onEnable() {
         server.pluginManager.registerEvents(this, this)
-        startUpdateTask()
+//        startUpdateTask()
     }
 
 //    override fun onDisable() {
@@ -38,80 +41,128 @@ class SmoothBoat : JavaPlugin(), Listener {
 //        boatDisplays.clear()
 //    }
 
-    private fun startUpdateTask() {
-        updateTask = object : BukkitRunnable() {
-            override fun run() {
-                server.worlds.forEach { world ->
-                    world.entities.filterIsInstance<Boat>().forEach { updateBoat(it) }
-                }
-            }
-        }.runTaskTimer(this, 0L, updateInterval)
-    }
+//    private fun startUpdateTask() {
+//        updateTask = object : BukkitRunnable() {
+//            override fun run() {
+//                server.worlds.forEach { world ->
+//                    world.entities.filterIsInstance<Boat>().forEach { updateBoat(it) }
+//                }
+//            }
+//        }.runTaskTimer(this, 0L, updateInterval)
+//    }
 
+    @EventHandler(priority = EventPriority.LOWEST)
+    fun onVehicleMoved(event: VehicleMoveEvent) {
+        val vehicle = event.vehicle
+        if (vehicle !is org.bukkit.entity.Boat && vehicle.isOnGround) return
 
-    private fun updateBoat(boat: Boat) {
-        val location = boat.location
-//        val displays = boatDisplays.getOrPut(boat) { BoatDisplays() }
-
-        // Check if the boat has moved significantly
-//        if (!displays.hasMovedSignificantly(location)) {
-//            return
-//        }
-
-        val maxDistance = 1.3
+        val location = vehicle.location
+        val maxDistance = 0.8
         val horizontalCount = 3
         val verticalCount = 2
         val rayStartHeight = 0.52
 
-//        var rayIndex = 0
         val rayStartLocation = location.clone().add(0.0, rayStartHeight, 0.0)
-        for (direction in pieShieldShapeRays(horizontalCount, verticalCount, boat.location.direction)) {
+        val boatDirection = vehicle.location.direction
+
+        var waterLevelSum = 0.0
+        var waterBlockCount = 0
+
+        for (direction in pieShieldShapeRays(horizontalCount, verticalCount, boatDirection)) {
             val rayTraceResult = raycastGround(rayStartLocation, direction, maxDistance)
-
-//            val hitPoint = rayTraceResult?.hitPosition ?: rayStartLocation.toVector().add(direction.multiply(maxDistance))
             val hitBlock = rayTraceResult?.hitBlock
-//            val hitLocation = hitPoint.toLocation(location.world)
-//            val distance = rayStartLocation.distance(hitLocation)
 
-//            displays.updateRayDisplay(rayIndex, rayStartLocation, hitLocation) { debugDisplay ->
-                if ( hitBlock?.type == Material.WATER) {
-                        val waterBlockLocation = hitBlock.location
-                        val waterBlockData = hitBlock.blockData
-                        val waterLevel = when (waterBlockData) {
-                            is Levelled -> {
-                                // Get the actual water level from the block data
-                                waterBlockLocation.y + 1.0 - (waterBlockData.level / 8.0)
-                            }
-                            else -> waterBlockLocation.y + 1.0
-                        }
+            if (hitBlock?.type == Material.WATER) {
+                val waterBlockLocation = hitBlock.location
+                val waterLevel = when (val waterBlockData = hitBlock.blockData) {
+                    is Levelled -> waterBlockLocation.y + 1.0 - (waterBlockData.level / 8.0)
+                    else -> waterBlockLocation.y + 1.0
+                }
+                waterLevelSum += waterLevel
+                waterBlockCount++
+            }
+        }
 
-//                        debugDisplay.text(Component.text("■", NamedTextColor.AQUA)
-//                            .append(Component.text(" Water", NamedTextColor.AQUA))
-//                            .append(Component.newline())
-//                            .append(Component.text("Level: ${String.format("%.2f", waterLevel)}", NamedTextColor.WHITE))
-//                            .append(Component.newline())
-//                            .append(Component.text(String.format("%.2f", distance), NamedTextColor.WHITE))
-//                            .append(Component.text("m", NamedTextColor.WHITE))
-//                        )
-//                        debugDisplay.viewRange = 64.0f
+        if (waterBlockCount > 0) {
+            val averageWaterLevel = waterLevelSum / waterBlockCount
+            val currentSpeed = vehicle.velocity.length()
+
+            val speedFactor = 0.1 + (currentSpeed * 0.1).coerceAtMost(0.5)
+            val verticalVelocity = (averageWaterLevel - location.y) * speedFactor
+
+            val maxVerticalVelocity = 0.2 + (currentSpeed * 0.05).coerceAtMost(0.6)
+
+            val newVelocity = vehicle.velocity.clone()
+            newVelocity.y = verticalVelocity.coerceIn(-maxVerticalVelocity, maxVerticalVelocity)
+
+            vehicle.velocity = newVelocity
+        }
+    }
 
 
-                        val currentSpeed = boat.velocity.length()
-
-                        val speedFactor = 0.1 + (currentSpeed * 0.1).coerceAtMost(0.5)
-                        val verticalVelocity = waterLevel * speedFactor
-
-// Calculate the maximum vertical velocity based on the current speed
-                        val maxVerticalVelocity = 0.2 + (currentSpeed * 0.05).coerceAtMost(0.6)
-
-// Get the current velocity and modify its Y component
-                        val newVelocity = boat.velocity.clone()
-                        newVelocity.y = verticalVelocity.coerceIn(-maxVerticalVelocity, maxVerticalVelocity)
-
-// Apply the new velocity to the boat
-                        boat.velocity = newVelocity
-
-                    }
+//    private fun updateBoat(boat: Boat) {
+//        val location = boat.location
+////        val displays = boatDisplays.getOrPut(boat) { BoatDisplays() }
+//
+//        // Check if the boat has moved significantly
+////        if (!displays.hasMovedSignificantly(location)) {
+////            return
+////        }
+//
+//        val maxDistance = 1.3
+//        val horizontalCount = 3
+//        val verticalCount = 2
+//        val rayStartHeight = 0.52
+//
+////        var rayIndex = 0
+//        val rayStartLocation = location.clone().add(0.0, rayStartHeight, 0.0)
+//        for (direction in pieShieldShapeRays(horizontalCount, verticalCount, boat.location.direction)) {
+//            val rayTraceResult = raycastGround(rayStartLocation, direction, maxDistance)
+//
+////            val hitPoint = rayTraceResult?.hitPosition ?: rayStartLocation.toVector().add(direction.multiply(maxDistance))
+//            val hitBlock = rayTraceResult?.hitBlock
+////            val hitLocation = hitPoint.toLocation(location.world)
+////            val distance = rayStartLocation.distance(hitLocation)
+//
+////            displays.updateRayDisplay(rayIndex, rayStartLocation, hitLocation) { debugDisplay ->
+//                if ( hitBlock?.type == Material.WATER) {
+//                        val waterBlockLocation = hitBlock.location
+//                        val waterBlockData = hitBlock.blockData
+//                        val waterLevel = when (waterBlockData) {
+//                            is Levelled -> {
+//                                // Get the actual water level from the block data
+//                                waterBlockLocation.y + 1.0 - (waterBlockData.level / 8.0)
+//                            }
+//                            else -> waterBlockLocation.y + 1.0
+//                        }
+//
+////                        debugDisplay.text(Component.text("■", NamedTextColor.AQUA)
+////                            .append(Component.text(" Water", NamedTextColor.AQUA))
+////                            .append(Component.newline())
+////                            .append(Component.text("Level: ${String.format("%.2f", waterLevel)}", NamedTextColor.WHITE))
+////                            .append(Component.newline())
+////                            .append(Component.text(String.format("%.2f", distance), NamedTextColor.WHITE))
+////                            .append(Component.text("m", NamedTextColor.WHITE))
+////                        )
+////                        debugDisplay.viewRange = 64.0f
+//
+//
+//                        val currentSpeed = boat.velocity.length()
+//
+//                        val speedFactor = 0.1 + (currentSpeed * 0.1).coerceAtMost(0.5)
+//                        val verticalVelocity = waterLevel * speedFactor
+//
+//// Calculate the maximum vertical velocity based on the current speed
+//                        val maxVerticalVelocity = 0.2 + (currentSpeed * 0.05).coerceAtMost(0.6)
+//
+//// Get the current velocity and modify its Y component
+//                        val newVelocity = boat.velocity.clone()
+//                        newVelocity.y = verticalVelocity.coerceIn(-maxVerticalVelocity, maxVerticalVelocity)
+//
+//// Apply the new velocity to the boat
+//                        boat.velocity = newVelocity
+//
+//                    }
 //                    hitBlock?.type?.isSolid == true -> {
 //                        debugDisplay.text(Component.text("■", NamedTextColor.RED)
 //                            .append(Component.text(" ${hitBlock.type}", NamedTextColor.RED))
@@ -139,10 +190,10 @@ class SmoothBoat : JavaPlugin(), Listener {
 //                        )
 //                        debugDisplay.viewRange = 64.0f
 //                    }
-                }
-            }
+//                }
+//            }
 //            rayIndex++
-        }
+//        }
 
 //        displays.removeExcessRayDisplays(rayIndex)
 
@@ -266,6 +317,7 @@ class SmoothBoat : JavaPlugin(), Listener {
             }
         }
     }
+}
 
 //    private fun createDebugDisplay(location: Location): TextDisplay {
 //        return location.world?.spawn(location, TextDisplay::class.java) { display ->
