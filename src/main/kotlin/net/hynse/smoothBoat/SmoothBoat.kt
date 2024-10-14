@@ -3,6 +3,8 @@ package net.hynse.smoothBoat
 //import net.kyori.adventure.text.Component
 //import net.kyori.adventure.text.format.NamedTextColor
 //import org.bukkit.Color
+import me.nahu.scheduler.wrapper.FoliaWrappedJavaPlugin
+import me.nahu.scheduler.wrapper.WrappedScheduler
 import org.bukkit.FluidCollisionMode
 import org.bukkit.Location
 import org.bukkit.Material
@@ -16,7 +18,7 @@ import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.vehicle.VehicleMoveEvent
 //import org.bukkit.event.vehicle.VehicleDestroyEvent
-import org.bukkit.plugin.java.JavaPlugin
+//import org.bukkit.plugin.java.JavaPlugin
 //import org.bukkit.scheduler.BukkitRunnable
 //import org.bukkit.scheduler.BukkitTask
 import org.bukkit.util.RayTraceResult
@@ -24,15 +26,20 @@ import org.bukkit.util.Vector
 import kotlin.math.cos
 import kotlin.math.sin
 
-class SmoothBoat : JavaPlugin(), Listener {
+class SmoothBoat : FoliaWrappedJavaPlugin(), Listener {
 
 //    private val boatDisplays = mutableMapOf<Boat, BoatDisplays>()
 //    private val updateInterval = 5L // Update every tick
 //    private val movementThreshold = 0.01 // Minimum movement to trigger an update
 //    private var updateTask: BukkitTask? = null
-
+companion object {
+    lateinit var instance: SmoothBoat
+        private set
+    val wrappedScheduler: WrappedScheduler by lazy { instance.scheduler }
+}
     override fun onEnable() {
-        server.pluginManager.registerEvents(this, this)
+        instance = this
+        server.pluginManager.registerEvents(this, instance)
 //        startUpdateTask()
     }
 
@@ -57,45 +64,49 @@ class SmoothBoat : JavaPlugin(), Listener {
         if (vehicle !is org.bukkit.entity.Boat && vehicle.isOnGround) return
 
         val location = vehicle.location
-        val maxDistance = 0.8
-        val horizontalCount = 3
-        val verticalCount = 2
-        val rayStartHeight = 0.52
-
-        val rayStartLocation = location.clone().add(0.0, rayStartHeight, 0.0)
-        val boatDirection = vehicle.location.direction
-
         var waterLevelSum = 0.0
         var waterBlockCount = 0
 
-        for (direction in pieShieldShapeRays(horizontalCount, verticalCount, boatDirection)) {
-            val rayTraceResult = raycastGround(rayStartLocation, direction, maxDistance)
-            val hitBlock = rayTraceResult?.hitBlock
+        wrappedScheduler.runTaskAsynchronously {
+            val maxDistance = 0.8
+            val horizontalCount = 3
+            val verticalCount = 2
+            val rayStartHeight = 0.52
 
-            if (hitBlock?.type == Material.WATER) {
-                val waterBlockLocation = hitBlock.location
-                val waterLevel = when (val waterBlockData = hitBlock.blockData) {
-                    is Levelled -> waterBlockLocation.y + 1.0 - (waterBlockData.level / 8.0)
-                    else -> waterBlockLocation.y + 1.0
+            val rayStartLocation = location.clone().add(0.0, rayStartHeight, 0.0)
+            val boatDirection = vehicle.location.direction
+
+            for (direction in pieShieldShapeRays(horizontalCount, verticalCount, boatDirection)) {
+                val rayTraceResult = raycastGround(rayStartLocation, direction, maxDistance)
+                val hitBlock = rayTraceResult?.hitBlock
+
+                    if (hitBlock?.type == Material.WATER) {
+                        val waterBlockLocation = hitBlock.location
+                        val waterLevel = when (val waterBlockData = hitBlock.blockData) {
+                            is Levelled -> waterBlockLocation.y + 1.0 - (waterBlockData.level / 8.0)
+                            else -> waterBlockLocation.y + 1.0
+                        }
+                        waterLevelSum += waterLevel
+                        waterBlockCount++
+                    }
                 }
-                waterLevelSum += waterLevel
-                waterBlockCount++
+
+                wrappedScheduler.runTaskAtEntity(vehicle) {
+                    if (waterBlockCount > 0) {
+                        val averageWaterLevel = waterLevelSum / waterBlockCount
+                        val currentSpeed = vehicle.velocity.length()
+
+                        val speedFactor = 0.1 + (currentSpeed * 0.1).coerceAtMost(0.5)
+                        val verticalVelocity = (averageWaterLevel - location.y) * speedFactor
+
+                        val maxVerticalVelocity = 0.2 + (currentSpeed * 0.05).coerceAtMost(0.6)
+
+                        val newVelocity = vehicle.velocity.clone()
+                        newVelocity.y = verticalVelocity.coerceIn(-maxVerticalVelocity, maxVerticalVelocity)
+                        vehicle.velocity = newVelocity
+                    }
+                }
             }
-        }
-
-        if (waterBlockCount > 0) {
-            val averageWaterLevel = waterLevelSum / waterBlockCount
-            val currentSpeed = vehicle.velocity.length()
-
-            val speedFactor = 0.1 + (currentSpeed * 0.1).coerceAtMost(0.5)
-            val verticalVelocity = (averageWaterLevel - location.y) * speedFactor
-
-            val maxVerticalVelocity = 0.2 + (currentSpeed * 0.05).coerceAtMost(0.6)
-
-            val newVelocity = vehicle.velocity.clone()
-            newVelocity.y = verticalVelocity.coerceIn(-maxVerticalVelocity, maxVerticalVelocity)
-
-            vehicle.velocity = newVelocity
         }
     }
 
@@ -209,7 +220,7 @@ class SmoothBoat : JavaPlugin(), Listener {
 //        }
 //        displays.updateLastLocation(location)
     private fun raycastGround(location: Location, direction: Vector, maxDistance: Double): RayTraceResult? {
-        return location.world!!.rayTraceBlocks(location, direction, maxDistance, FluidCollisionMode.ALWAYS, false)
+        return location.world!!.rayTraceBlocks(location, direction, maxDistance, FluidCollisionMode.ALWAYS, false )
     }
 //    private fun sphereRays(
 //        horizontalCount: Int,
@@ -317,7 +328,6 @@ class SmoothBoat : JavaPlugin(), Listener {
             }
         }
     }
-}
 
 //    private fun createDebugDisplay(location: Location): TextDisplay {
 //        return location.world?.spawn(location, TextDisplay::class.java) { display ->
