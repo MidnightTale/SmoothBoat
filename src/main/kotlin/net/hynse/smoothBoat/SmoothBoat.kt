@@ -67,7 +67,7 @@ companion object {
         var waterLevelSum = 0.0
         var waterBlockCount = 0
 
-        wrappedScheduler.runTaskAsynchronously {
+        wrappedScheduler.runTaskAtLocation(location) {
             val maxDistance = 0.8
             val horizontalCount = 3
             val verticalCount = 2
@@ -91,8 +91,7 @@ companion object {
                     }
                 }
 
-                wrappedScheduler.runTaskAtEntity(vehicle) {
-                    if (waterBlockCount > 0) {
+                     if (waterBlockCount > 0) {
                         val averageWaterLevel = waterLevelSum / waterBlockCount
                         val currentSpeed = vehicle.velocity.length()
 
@@ -105,7 +104,6 @@ companion object {
                         newVelocity.y = verticalVelocity.coerceIn(-maxVerticalVelocity, maxVerticalVelocity)
                         vehicle.velocity = newVelocity
                     }
-                }
             }
         }
     }
